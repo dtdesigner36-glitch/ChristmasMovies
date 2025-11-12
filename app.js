@@ -1,8 +1,8 @@
 const { useEffect, useMemo, useState } = React;
 
 // 🔧 НАСТРОЙКИ SUPABASE — ВСТАВЬ СВОИ ДАННЫЕ:
-const SUPABASE_URL = "https://YOUR_PROJECT_ID.supabase.co";
-const SUPABASE_ANON_KEY = "YOUR_PUBLIC_ANON_KEY";
+const SUPABASE_URL = "https://kvfmvbfmkkkmoewyjtfu.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt2Zm12YmZta2trbW9ld3lqdGZ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI5Nzk4NTQsImV4cCI6MjA3ODU1NTg1NH0.uPBy77qj0WFdTN7h1fIcxaKAKtwWu690kkElThEbFwk";
 
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
