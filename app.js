@@ -7,11 +7,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // mshots превью постера по ссылке
-const SHOT = url =>
+const SHOT = (url) =>
   `https://s.wordpress.com/mshots/v1/${encodeURIComponent(url)}?w=640`;
 
 // только для запоминания последнего ника на этом устройстве
-const LS_LAST_NICK = "xmas_last_nick_cloud_v2";
+const LS_LAST_NICK = "xmas_last_nick_cloud_v4";
 function lsGet(key, fallback) {
   try {
     const v = localStorage.getItem(key);
@@ -31,7 +31,6 @@ function App() {
   const [loadingMovies, setLoadingMovies] = useState(true);
 
   const [allowRegistration, setAllowRegistration] = useState(true);
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   const [currentUser, setCurrentUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -49,6 +48,13 @@ function App() {
   const [newMovieTitle, setNewMovieTitle] = useState("");
   const [newMovieLink, setNewMovieLink] = useState("");
 
+  const [editingMovieId, setEditingMovieId] = useState(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editLink, setEditLink] = useState("");
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 24;
+
   // начальная загрузка настроек, фильмов и общих лайков
   useEffect(() => {
     (async () => {
@@ -64,7 +70,6 @@ function App() {
         } else {
           setAllowRegistration(true);
         }
-        setSettingsLoaded(true);
 
         // MOVIES
         const { data: movieRows, error: movieErr } = await supabase
@@ -102,6 +107,7 @@ function App() {
     })();
   }, []);
 
+  // фильтрация
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return movies
@@ -110,7 +116,18 @@ function App() {
       .filter((m) => !onlyLiked || userReactions[m.id] === 1);
   }, [movies, query, onlyUnwatched, onlyLiked, userWatched, userReactions]);
 
-  // ─────────── ВХОД / ЮЗЕР ───────────
+  // при изменении фильтров / списка сбрасываем страницу на 1
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [query, onlyUnwatched, onlyLiked, movies.length]);
+
+  // пагинация
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, pageCount);
+  const startIndex = (safePage - 1) * PAGE_SIZE;
+  const paginated = filtered.slice(startIndex, startIndex + PAGE_SIZE);
+
+  // ─────────── ВХОД / РЕГИСТРАЦИЯ ───────────
 
   async function loadUserState(userId) {
     try {
@@ -144,29 +161,54 @@ function App() {
     }
   }
 
-  async function handleLogin(nicknameRaw) {
-    const nickname = (nicknameRaw || "").trim();
-    if (!nickname) {
+  // onSubmit из модалки
+  async function handleAuth({ nickname, password, mode }) {
+    const nick = (nickname || "").trim();
+    const pass = (password || "").trim();
+
+    if (!nick) {
       alert("Введите ник");
+      return;
+    }
+    if (!pass) {
+      alert("Введите пароль");
       return;
     }
 
     try {
-      // Ищем юзера по нику
-      const { data: rows, error } = await supabase
-        .from("users")
-        .select("id,nickname,is_admin")
-        .eq("nickname", nickname)
-        .limit(1);
+      if (mode === "login") {
+        // ВХОД
+        const { data: rows, error } = await supabase
+          .from("users")
+          .select("id,nickname,is_admin,password")
+          .eq("nickname", nick)
+          .limit(1);
 
-      if (error) {
-        console.error("Ошибка поиска пользователя:", error);
-      }
+        if (error) {
+          console.error("Ошибка поиска пользователя:", error);
+          alert("Ошибка входа");
+          return;
+        }
 
-      let user = rows && rows.length ? rows[0] : null;
+        if (!rows || !rows.length) {
+          alert("Пользователь с таким ником не найден");
+          return;
+        }
 
-      // если нет – создаём только когда регистрация включена
-      if (!user) {
+        const user = rows[0];
+
+        if (!user.password || user.password !== pass) {
+          alert("Неверный пароль");
+          return;
+        }
+
+        setCurrentUser(user);
+        setIsAdmin(!!user.is_admin);
+        lsSet(LS_LAST_NICK, nick);
+        setShowNickModal(false);
+        await loadUserState(user.id);
+      } else {
+        // РЕГИСТРАЦИЯ
         if (!allowRegistration) {
           alert(
             "Регистрация сейчас выключена. Можно зайти только под существующим ником."
@@ -174,10 +216,27 @@ function App() {
           return;
         }
 
+        const { data: existing, error: exErr } = await supabase
+          .from("users")
+          .select("id")
+          .eq("nickname", nick)
+          .limit(1);
+
+        if (exErr) {
+          console.error("Ошибка проверки ника:", exErr);
+          alert("Ошибка регистрации");
+          return;
+        }
+
+        if (existing && existing.length) {
+          alert("Такой ник уже существует. Пожалуйста, придумай другой.");
+          return;
+        }
+
         const { data: newUser, error: insErr } = await supabase
           .from("users")
-          .insert({ nickname })
-          .select("id,nickname,is_admin")
+          .insert({ nickname: nick, password: pass })
+          .select("id,nickname,is_admin,password")
           .single();
 
         if (insErr) {
@@ -185,17 +244,16 @@ function App() {
           alert("Не удалось создать пользователя");
           return;
         }
-        user = newUser;
-      }
 
-      setCurrentUser(user);
-      setIsAdmin(!!user.is_admin);
-      lsSet(LS_LAST_NICK, nickname);
-      setShowNickModal(false);
-      await loadUserState(user.id);
+        setCurrentUser(newUser);
+        setIsAdmin(!!newUser.is_admin);
+        lsSet(LS_LAST_NICK, nick);
+        setShowNickModal(false);
+        await loadUserState(newUser.id);
+      }
     } catch (e) {
-      console.error("handleLogin error:", e);
-      alert("Ошибка входа");
+      console.error("handleAuth error:", e);
+      alert("Ошибка входа / регистрации");
     }
   }
 
@@ -251,7 +309,6 @@ function App() {
     const prevVal = userReactions[movieId] || 0;
     const nextVal = prevVal === value ? 0 : value;
 
-    // локальное состояние пользователя
     setUserReactions((prev) => {
       const n = { ...prev };
       if (nextVal === 0) delete n[movieId];
@@ -259,7 +316,6 @@ function App() {
       return n;
     });
 
-    // глобальные счётчики
     setMovieReactions((prev) => {
       const curr = prev[movieId] || { likes: 0, dislikes: 0 };
       const n = { ...prev };
@@ -310,12 +366,14 @@ function App() {
   async function handleAddMovie(e) {
     e.preventDefault();
     if (!isAdmin) return;
+
     const title = newMovieTitle.trim();
     const link = newMovieLink.trim();
     if (!title || !link) {
       alert("Заполни название и ссылку");
       return;
     }
+
     try {
       setAddingMovie(true);
       const { data, error } = await supabase
@@ -343,13 +401,101 @@ function App() {
     }
   }
 
+  // ─────────── РЕДАКТИРОВАНИЕ / УДАЛЕНИЕ ФИЛЬМА (админ) ───────────
+
+  function startEditMovie(movie) {
+    if (!isAdmin) return;
+    setEditingMovieId(movie.id);
+    setEditTitle(movie.title);
+    setEditLink(movie.link);
+  }
+
+  function cancelEditMovie() {
+    setEditingMovieId(null);
+    setEditTitle("");
+    setEditLink("");
+  }
+
+  async function saveEditMovie(movieId) {
+    if (!isAdmin) return;
+    const title = editTitle.trim();
+    const link = editLink.trim();
+    if (!title || !link) {
+      alert("Заполни название и ссылку");
+      return;
+    }
+    try {
+      const { data, error } = await supabase
+        .from("movies")
+        .update({ title, link })
+        .eq("id", movieId)
+        .select("id,title,link")
+        .single();
+
+      if (error) {
+        console.error("update movie error:", error);
+        alert("Не удалось сохранить изменения");
+      } else if (data) {
+        setMovies((prev) =>
+          prev
+            .map((m) => (m.id === movieId ? data : m))
+            .sort((a, b) => a.title.localeCompare(b.title, "ru"))
+        );
+        cancelEditMovie();
+      }
+    } catch (e) {
+      console.error("update movie error:", e);
+    }
+  }
+
+  async function deleteMovie(movieId) {
+    if (!isAdmin) return;
+    if (!window.confirm("Удалить этот фильм? Это действие нельзя отменить.")) {
+      return;
+    }
+    try {
+      const { error } = await supabase
+        .from("movies")
+        .delete()
+        .eq("id", movieId);
+
+      if (error) {
+        console.error("delete movie error:", error);
+        alert("Не удалось удалить фильм");
+        return;
+      }
+
+      setMovies((prev) => prev.filter((m) => m.id !== movieId));
+      setUserWatched((prev) => {
+        const s = new Set(prev);
+        s.delete(movieId);
+        return s;
+      });
+      setUserReactions((prev) => {
+        const n = { ...prev };
+        delete n[movieId];
+        return n;
+      });
+      setMovieReactions((prev) => {
+        const n = { ...prev };
+        delete n[movieId];
+        return n;
+      });
+      if (editingMovieId === movieId) {
+        cancelEditMovie();
+      }
+    } catch (e) {
+      console.error("delete movie error:", e);
+    }
+  }
+
   return (
     <>
       {showNickModal && (
         <NickModal
           defaultNick={lsGet(LS_LAST_NICK, "")}
           allowRegistration={allowRegistration}
-          onSubmit={handleLogin}
+          onSubmit={handleAuth}
         />
       )}
 
@@ -403,18 +549,52 @@ function App() {
           </div>
         )}
 
+        {filtered.length > 0 && (
+          <div className="pagination">
+            <button
+              type="button"
+              className="md-btn chip"
+              disabled={safePage === 1}
+              onClick={() =>
+                setCurrentPage((p) => (p > 1 ? p - 1 : p))
+              }
+            >
+              <span className="material-symbols-rounded">chevron_left</span>
+              <span>Назад</span>
+            </button>
+            <span className="pagination-info">
+              Страница {safePage} из {pageCount} • Всего фильмов:{" "}
+              {filtered.length}
+            </span>
+            <button
+              type="button"
+              className="md-btn chip"
+              disabled={safePage === pageCount}
+              onClick={() =>
+                setCurrentPage((p) =>
+                  p < pageCount ? p + 1 : p
+                )
+              }
+            >
+              <span>Вперёд</span>
+              <span className="material-symbols-rounded">chevron_right</span>
+            </button>
+          </div>
+        )}
+
         <div className="grid">
           {filtered.length === 0 && movies.length > 0 && (
             <div className="empty">Ничего не найдено по фильтру</div>
           )}
 
-          {filtered.map((movie) => {
+          {paginated.map((movie) => {
             const isW = userWatched.has(movie.id);
             const myR = userReactions[movie.id] || 0;
             const counts = movieReactions[movie.id] || {
               likes: 0,
               dislikes: 0,
             };
+            const isEditing = editingMovieId === movie.id;
 
             return (
               <article
@@ -440,64 +620,133 @@ function App() {
                     }}
                   />
                   <button
-                    className="watched-toggle"
+                    className={
+                      "watched-toggle " +
+                      (isW ? "watched-on" : "watched-off")
+                    }
                     onClick={() => toggleWatch(movie.id)}
                   >
                     <span className="material-symbols-rounded">
-                      check_circle
+                      {isW ? "check_circle" : "radio_button_unchecked"}
                     </span>
-                    <span>Просмотрено</span>
+                    <span>{isW ? "Просмотрено" : "Не просмотрено"}</span>
                   </button>
                 </div>
 
                 <div className="card-body">
-                  <h3 className="title">{movie.title}</h3>
+                  {isEditing ? (
+                    <>
+                      <input
+                        className="input input-full"
+                        placeholder="Название фильма"
+                        value={editTitle}
+                        onChange={(e) => setEditTitle(e.target.value)}
+                      />
+                      <input
+                        className="input input-full"
+                        placeholder="Ссылка на фильм"
+                        value={editLink}
+                        onChange={(e) => setEditLink(e.target.value)}
+                      />
+                      <div
+                        className="row"
+                        style={{ justifyContent: "flex-end" }}
+                      >
+                        <button
+                          type="button"
+                          className="md-btn tonal"
+                          onClick={cancelEditMovie}
+                        >
+                          Отмена
+                        </button>
+                        <button
+                          type="button"
+                          className="md-btn"
+                          onClick={() => saveEditMovie(movie.id)}
+                        >
+                          Сохранить
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <h3 className="title">{movie.title}</h3>
 
-                  <div className="reactions">
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: "8px",
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <button
-                        className={
-                          "react-btn " + (myR === 1 ? "active-like" : "")
-                        }
-                        onClick={() => toggleReaction(movie.id, 1)}
+                      {isAdmin && (
+                        <div className="admin-controls">
+                          <button
+                            type="button"
+                            className="admin-icon-btn"
+                            title="Редактировать"
+                            onClick={() => startEditMovie(movie)}
+                          >
+                            <span className="material-symbols-rounded">
+                              edit
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            className="admin-icon-btn"
+                            title="Удалить"
+                            onClick={() => deleteMovie(movie.id)}
+                          >
+                            <span className="material-symbols-rounded">
+                              delete
+                            </span>
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="reactions">
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "8px",
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <button
+                            className={
+                              "react-btn " + (myR === 1 ? "active-like" : "")
+                            }
+                            onClick={() => toggleReaction(movie.id, 1)}
+                          >
+                            <span className="material-symbols-rounded">
+                              thumb_up
+                            </span>
+                            <span>{counts.likes}</span>
+                          </button>
+                          <button
+                            className={
+                              "react-btn " +
+                              (myR === -1 ? "active-dislike" : "")
+                            }
+                            onClick={() => toggleReaction(movie.id, -1)}
+                          >
+                            <span className="material-symbols-rounded">
+                              thumb_down
+                            </span>
+                            <span>{counts.dislikes}</span>
+                          </button>
+                        </div>
+                        <div className="counts">
+                          <span>👍 / 👎 общие для всех</span>
+                        </div>
+                      </div>
+
+                      <a
+                        className="md-btn link-btn"
+                        href={movie.link}
+                        target="_blank"
+                        rel="noopener"
                       >
                         <span className="material-symbols-rounded">
-                          thumb_up
+                          open_in_new
                         </span>
-                        <span>{counts.likes}</span>
-                      </button>
-                      <button
-                        className={
-                          "react-btn " + (myR === -1 ? "active-dislike" : "")
-                        }
-                        onClick={() => toggleReaction(movie.id, -1)}
-                      >
-                        <span className="material-symbols-rounded">
-                          thumb_down
-                        </span>
-                        <span>{counts.dislikes}</span>
-                      </button>
-                    </div>
-                    <div className="counts">
-                      <span>👍 / 👎 общие для всех</span>
-                    </div>
-                  </div>
-
-                  <a
-                    className="md-btn link-btn"
-                    href={movie.link}
-                    target="_blank"
-                    rel="noopener"
-                  >
-                    <span className="material-symbols-rounded">open_in_new</span>
-                    <span>Смотреть</span>
-                  </a>
+                        <span>Смотреть</span>
+                      </a>
+                    </>
+                  )}
                 </div>
               </article>
             );
@@ -566,7 +815,7 @@ function App() {
               />
               <input
                 className="input input-full"
-                placeholder="Ссылка на фильм"
+                placeholder="Ссылка на фильм (Rezka / YouTube)"
                 value={newMovieLink}
                 onChange={(e) => setNewMovieLink(e.target.value)}
               />
@@ -582,30 +831,53 @@ function App() {
   );
 }
 
-// Модалка с ником
+// Модалка: вход / регистрация
 function NickModal({ defaultNick, allowRegistration, onSubmit }) {
   const [nickname, setNickname] = useState(defaultNick || "");
+  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState("login"); // 'login' | 'register'
 
   function handleSubmit(e) {
     e.preventDefault();
-    onSubmit(nickname);
+    onSubmit({ nickname, password, mode });
   }
 
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
       <form className="modal elevation-2" onSubmit={handleSubmit}>
         <h2>Добро пожаловать 🎄</h2>
+
+        <div className="row" style={{ marginTop: "4px" }}>
+          <button
+            type="button"
+            className={"md-btn chip " + (mode === "login" ? "active" : "")}
+            onClick={() => setMode("login")}
+          >
+            Вход
+          </button>
+          <button
+            type="button"
+            className={"md-btn chip " + (mode === "register" ? "active" : "")}
+            onClick={() => setMode("register")}
+            disabled={!allowRegistration}
+          >
+            Регистрация
+          </button>
+        </div>
+
         <div className="sub">
-          Укажи никнейм, чтобы отмечать просмотренное и ставить лайки.
-          {allowRegistration ? (
+          {mode === "login" ? (
             <div className="hint" style={{ marginTop: "4px" }}>
-              Сейчас <strong>регистрация открыта</strong> — можно придумать новый
-              ник.
+              Введите свой ник и пароль, чтобы войти.
             </div>
           ) : (
             <div className="hint" style={{ marginTop: "4px" }}>
-              Сейчас <strong>регистрация закрыта</strong> — вход только под
-              существующим ником.
+              Придумайте ник и пароль.{" "}
+              {allowRegistration ? (
+                <strong>Регистрация открыта.</strong>
+              ) : (
+                <strong>Сейчас регистрация закрыта.</strong>
+              )}
             </div>
           )}
         </div>
@@ -620,10 +892,20 @@ function NickModal({ defaultNick, allowRegistration, onSubmit }) {
           />
         </div>
 
+        <div className="row">
+          <input
+            className="input input-full"
+            type="password"
+            placeholder="Пароль"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </div>
+
         <div className="row" style={{ justifyContent: "flex-end" }}>
           <button className="md-btn" type="submit">
             <span className="material-symbols-rounded">login</span>
-            <span>Продолжить</span>
+            <span>{mode === "login" ? "Войти" : "Зарегистрироваться"}</span>
           </button>
         </div>
       </form>
