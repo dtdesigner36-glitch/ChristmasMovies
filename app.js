@@ -11,7 +11,7 @@ const BASE_SHOT = (url) =>
   `https://s.wordpress.com/mshots/v1/${encodeURIComponent(url)}?w=640`;
 
 // только для сохранения ника на этом устройстве
-const LS_LAST_NICK = "xmas_last_nick_cloud_v6";
+const LS_LAST_NICK = "xmas_last_nick_cloud_v7";
 function lsGet(key, fallback) {
   try {
     const v = localStorage.getItem(key);
@@ -60,9 +60,6 @@ function App() {
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 24;
 
-  // кэш-бастер для постеров: { movieId: timestamp }
-  
-
   // начальная загрузка настроек, фильмов и общих реакций
   useEffect(() => {
     (async () => {
@@ -81,9 +78,9 @@ function App() {
 
         // MOVIES
         const { data: movieRows, error: movieErr } = await supabase
-  .from("movies")
-  .select("id,title,link,poster_url,poster_version")
-  .order("title", { ascending: true });
+          .from("movies")
+          .select("id,title,link,poster_url,poster_version")
+          .order("title", { ascending: true });
 
         if (!movieErr && movieRows) {
           setMovies(movieRows);
@@ -388,7 +385,7 @@ function App() {
       const { data, error } = await supabase
         .from("movies")
         .insert({ title, link, poster_url })
-        .select("id,title,link,poster_url")
+        .select("id,title,link,poster_url,poster_version")
         .single();
 
       if (error) {
@@ -443,7 +440,7 @@ function App() {
         .from("movies")
         .update({ title, link, poster_url })
         .eq("id", movieId)
-        .select("id,title,link,poster_url")
+        .select("id,title,link,poster_url,poster_version")
         .single();
 
       if (error) {
@@ -455,11 +452,6 @@ function App() {
             .map((m) => (m.id === movieId ? data : m))
             .sort((a, b) => a.title.localeCompare(b.title, "ru"))
         );
-        // сбиваем кэш постера
-        setPosterCacheBust((prev) => ({
-          ...prev,
-          [movieId]: Date.now(),
-        }));
         cancelEditMovie();
       }
     } catch (e) {
@@ -500,11 +492,6 @@ function App() {
         delete n[movieId];
         return n;
       });
-      setPosterCacheBust((prev) => {
-        const n = { ...prev };
-        delete n[movieId];
-        return n;
-      });
       if (editingMovieId === movieId) {
         cancelEditMovie();
       }
@@ -515,43 +502,50 @@ function App() {
 
   // ─────────── ОБНОВЛЕНИЕ ПОСТЕРА (админ) ───────────
 
- function refreshPoster(movieId) {
-  if (!isAdmin) return;
+  function refreshPoster(movieId) {
+    if (!isAdmin) return;
 
-  // локально сразу увеличиваем версию, чтобы UI обновился моментально
-  setMovies((prev) =>
-    prev.map((m) =>
-      m.id === movieId
-        ? { ...m, poster_version: (m.poster_version || 0) + 1 }
-        : m
-    )
-  );
+    let versionToSave = 0;
 
-  // и обновляем версию в базе
-  const movie = movies.find((m) => m.id === movieId);
-  const newVersion = (movie?.poster_version || 0) + 1;
+    setMovies((prev) => {
+      const updated = prev.map((m) => {
+        if (m.id === movieId) {
+          const nextVersion = (m.poster_version || 0) + 1;
+          versionToSave = nextVersion;
+          return { ...m, poster_version: nextVersion };
+        }
+        return m;
+      });
 
-  supabase
-    .from("movies")
-    .update({ poster_version: newVersion })
-    .eq("id", movieId)
-    .then(({ error }) => {
-      if (error) {
-        console.error("poster_version update error:", error);
+      // обновляем в базе (делаем это внутри, чтобы был доступ к versionToSave)
+      if (versionToSave > 0) {
+        supabase
+          .from("movies")
+          .update({ poster_version: versionToSave })
+          .eq("id", movieId)
+          .then(({ error }) => {
+            if (error) {
+              console.error("poster_version update error:", error);
+            }
+          });
       }
+
+      return updated;
     });
-}
+  }
 
   // итоговый src постера
- function getPosterSrc(movie) {
-  const baseUrl =
-    (movie.poster_url && movie.poster_url.trim()) || BASE_SHOT(movie.link);
-  const version = movie.poster_version || 0;
-  if (!version) return baseUrl;
+  function getPosterSrc(movie) {
+    const baseUrl =
+      (movie.poster_url && movie.poster_url.trim()) || BASE_SHOT(movie.link);
+    const version = movie.poster_version || 0;
+    if (!version) return baseUrl;
 
-  const separator = baseUrl.includes("?") ? "&" : "?";
-  return `${baseUrl}${separator}cb=${version}`;
-}
+    const separator = baseUrl.includes("?") ? "&" : "?";
+    return `${baseUrl}${separator}cb=${version}`;
+  }
+
+  // ─────────── РЕНДЕР ───────────
 
   return (
     <>
@@ -667,9 +661,7 @@ function App() {
               >
                 <div className="poster-wrap">
                   <img
-                    key={
-                      movie.id + "-" + (posterCacheBust[movie.id] || 0)
-                    }
+                    key={movie.id + "-" + (movie.poster_version || 0)}
                     className="poster"
                     loading="lazy"
                     alt={movie.title}
@@ -699,32 +691,6 @@ function App() {
                     <span>{isW ? "Просмотрено" : "Не просмотрено"}</span>
                   </button>
                 </div>
-
-                      {filtered.length > 0 && (
-  <div className="pagination pagination-bottom">
-    <button
-      type="button"
-      className="md-btn chip"
-      disabled={safePage === 1}
-      onClick={() => setCurrentPage((p) => (p > 1 ? p - 1 : p))}
-    >
-      <span className="material-symbols-rounded">chevron_left</span>
-      <span>Назад</span>
-    </button>
-    <span className="pagination-info">
-      Страница {safePage} из {pageCount} • Всего фильмов: {filtered.length}
-    </span>
-    <button
-      type="button"
-      className="md-btn chip"
-      disabled={safePage === pageCount}
-      onClick={() => setCurrentPage((p) => (p < pageCount ? p + 1 : p))}
-    >
-      <span>Вперёд</span>
-      <span className="material-symbols-rounded">chevron_right</span>
-    </button>
-  </div>
-)}
 
                 <div className="card-body">
                   {isEditing ? (
@@ -861,6 +827,39 @@ function App() {
             );
           })}
         </div>
+
+        {filtered.length > 0 && (
+          <div className="pagination pagination-bottom">
+            <button
+              type="button"
+              className="md-btn chip"
+              disabled={safePage === 1}
+              onClick={() =>
+                setCurrentPage((p) => (p > 1 ? p - 1 : p))
+              }
+            >
+              <span className="material-symbols-rounded">chevron_left</span>
+              <span>Назад</span>
+            </button>
+            <span className="pagination-info">
+              Страница {safePage} из {pageCount} • Всего фильмов:{" "}
+              {filtered.length}
+            </span>
+            <button
+              type="button"
+              className="md-btn chip"
+              disabled={safePage === pageCount}
+              onClick={() =>
+                setCurrentPage((p) =>
+                  p < pageCount ? p + 1 : p
+                )
+              }
+            >
+              <span>Вперёд</span>
+              <span className="material-symbols-rounded">chevron_right</span>
+            </button>
+          </div>
+        )}
       </main>
 
       <footer className="footer" aria-hidden={showNickModal}>
