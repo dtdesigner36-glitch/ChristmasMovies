@@ -6,14 +6,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// mshots превью постера по ссылке
-const SHOT = (url, version = 0) =>
-  `https://s.wordpress.com/mshots/v1/${encodeURIComponent(
-    url
-  )}?w=640&v=${version}`;
+// mshots превью постера по ссылке (базовый URL)
+const BASE_SHOT = (url) =>
+  `https://s.wordpress.com/mshots/v1/${encodeURIComponent(url)}?w=640`;
 
 // только для запоминания последнего ника на этом устройстве
-const LS_LAST_NICK = "xmas_last_nick_cloud_v4";
+const LS_LAST_NICK = "xmas_last_nick_cloud_v5";
 function lsGet(key, fallback) {
   try {
     const v = localStorage.getItem(key);
@@ -41,7 +39,6 @@ function App() {
   const [userWatched, setUserWatched] = useState(new Set());
   const [userReactions, setUserReactions] = useState({});
   const [movieReactions, setMovieReactions] = useState({});
-  const [posterVersion, setPosterVersion] = useState({});
 
   const [query, setQuery] = useState("");
   const [onlyUnwatched, setOnlyUnwatched] = useState(false);
@@ -57,6 +54,9 @@ function App() {
 
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 24;
+
+  // 💡 кэш-бастер для конкретного фильма: { [movieId]: timestamp }
+  const [posterCacheBust, setPosterCacheBust] = useState({});
 
   // начальная загрузка настроек, фильмов и общих лайков
   useEffect(() => {
@@ -406,14 +406,6 @@ function App() {
 
   // ─────────── РЕДАКТИРОВАНИЕ / УДАЛЕНИЕ ФИЛЬМА (админ) ───────────
 
-  function refreshPoster(movieId) {
-  // просто увеличиваем версию постера для конкретного фильма
-  setPosterVersion((prev) => ({
-    ...prev,
-    [movieId]: (prev[movieId] || 0) + 1,
-  }));
-}
-  
   function startEditMovie(movie) {
     if (!isAdmin) return;
     setEditingMovieId(movie.id);
@@ -452,6 +444,12 @@ function App() {
             .map((m) => (m.id === movieId ? data : m))
             .sort((a, b) => a.title.localeCompare(b.title, "ru"))
         );
+        // при изменении ссылки ломаем кэш постера, чтобы при следующей перезагрузке был новый
+        setPosterCacheBust((prev) => {
+          const n = { ...prev };
+          delete n[movieId];
+          return n;
+        });
         cancelEditMovie();
       }
     } catch (e) {
@@ -492,12 +490,37 @@ function App() {
         delete n[movieId];
         return n;
       });
+      setPosterCacheBust((prev) => {
+        const n = { ...prev };
+        delete n[movieId];
+        return n;
+      });
       if (editingMovieId === movieId) {
         cancelEditMovie();
       }
     } catch (e) {
       console.error("delete movie error:", e);
     }
+  }
+
+  // ─────────── ОБНОВЛЕНИЕ ПОСТЕРА (админ) ───────────
+
+  function refreshPoster(movieId) {
+    if (!isAdmin) return;
+    // ставим для фильма новый timestamp — он попадёт в &cb= и точно собьёт кэш браузера
+    setPosterCacheBust((prev) => ({
+      ...prev,
+      [movieId]: Date.now(),
+    }));
+  }
+
+  // получить итоговый src для постера
+  function getPosterSrc(movie) {
+    const base = BASE_SHOT(movie.link);
+    const cb = posterCacheBust[movie.id];
+    if (!cb) return base;
+    // base уже с ?w=640, добавляем ещё &cb=
+    return `${base}&cb=${cb}`;
   }
 
   return (
@@ -617,7 +640,7 @@ function App() {
                     className="poster"
                     loading="lazy"
                     alt={movie.title}
-                    src={SHOT(movie.link, posterVersion[movie.id] || 0)}
+                    src={getPosterSrc(movie)}
                     onError={(e) => {
                       const svg = encodeURIComponent(
                         `<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360'>
@@ -684,33 +707,39 @@ function App() {
                       <h3 className="title">{movie.title}</h3>
 
                       {isAdmin && (
-  <div className="admin-controls">
-    <button
-      type="button"
-      className="admin-icon-btn"
-      title="Редактировать"
-      onClick={() => startEditMovie(movie)}
-    >
-      <span className="material-symbols-rounded">edit</span>
-    </button>
-    <button
-      type="button"
-      className="admin-icon-btn"
-      title="Удалить"
-      onClick={() => deleteMovie(movie.id)}
-    >
-      <span className="material-symbols-rounded">delete</span>
-    </button>
-    <button
-      type="button"
-      className="admin-icon-btn"
-      title="Обновить постер"
-      onClick={() => refreshPoster(movie.id)}
-    >
-      <span className="material-symbols-rounded">refresh</span>
-    </button>
-  </div>
-)}
+                        <div className="admin-controls">
+                          <button
+                            type="button"
+                            className="admin-icon-btn"
+                            title="Редактировать"
+                            onClick={() => startEditMovie(movie)}
+                          >
+                            <span className="material-symbols-rounded">
+                              edit
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            className="admin-icon-btn"
+                            title="Удалить"
+                            onClick={() => deleteMovie(movie.id)}
+                          >
+                            <span className="material-symbols-rounded">
+                              delete
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            className="admin-icon-btn"
+                            title="Обновить постер"
+                            onClick={() => refreshPoster(movie.id)}
+                          >
+                            <span className="material-symbols-rounded">
+                              refresh
+                            </span>
+                          </button>
+                        </div>
+                      )}
 
                       <div className="reactions">
                         <div
