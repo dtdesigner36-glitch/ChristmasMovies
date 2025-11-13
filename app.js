@@ -1,8 +1,9 @@
 const { useEffect, useMemo, useState } = React;
 
-// 🔧 НАСТРОЙКИ SUPABASE — ВСТАВЬ СВОИ ДАННЫЕ:
+// 🔧 Supabase config — уже с твоими данными
 const SUPABASE_URL = "https://kvfmvbfmkkkmoewyjtfu.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt2Zm12YmZta2trbW9ld3lqdGZ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI5Nzk4NTQsImV4cCI6MjA3ODU1NTg1NH0.uPBy77qj0WFdTN7h1fIcxaKAKtwWu690kkElThEbFwk";
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt2Zm12YmZta2trbW9ld3lqdGZ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI5Nzk4NTQsImV4cCI6MjA3ODU1NTg1NH0.uPBy77qj0WFdTN7h1fIcxaKAKtwWu690kkElThEbFwk";
 
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -10,8 +11,10 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const BASE_SHOT = (url) =>
   `https://s.wordpress.com/mshots/v1/${encodeURIComponent(url)}?w=640`;
 
-// только для сохранения ника на этом устройстве
+// localStorage ключи
 const LS_LAST_NICK = "xmas_last_nick_cloud_v7";
+const LS_SESSION = "xmas_user_session_v1";
+
 function lsGet(key, fallback) {
   try {
     const v = localStorage.getItem(key);
@@ -25,6 +28,43 @@ function lsSet(key, value) {
     localStorage.setItem(key, value);
   } catch {}
 }
+
+// ───── СЕССИИ (7 дней) ─────
+
+function saveSession(user) {
+  // 7 дней
+  const expires = Date.now() + 1000 * 60 * 60 * 24 * 7;
+  const obj = {
+    user_id: user.id,
+    nickname: user.nickname,
+    is_admin: !!user.is_admin,
+    expires,
+  };
+  lsSet(LS_SESSION, JSON.stringify(obj));
+}
+
+function loadSession() {
+  try {
+    const raw = lsGet(LS_SESSION, null);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || !obj.expires || Date.now() > obj.expires) {
+      clearSession();
+      return null;
+    }
+    return obj;
+  } catch {
+    return null;
+  }
+}
+
+function clearSession() {
+  try {
+    localStorage.removeItem(LS_SESSION);
+  } catch {}
+}
+
+// ───── ПРИЛОЖЕНИЕ ─────
 
 function App() {
   const [movies, setMovies] = useState([]);
@@ -60,7 +100,8 @@ function App() {
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 24;
 
-  // начальная загрузка настроек, фильмов и общих реакций
+  // ─────────── ЗАГРУЗКА НАСТРОЕК / ФИЛЬМОВ / РЕАКЦИЙ ───────────
+
   useEffect(() => {
     (async () => {
       try {
@@ -96,7 +137,8 @@ function App() {
         if (!reactErr && allReacts) {
           const agg = {};
           for (const r of allReacts) {
-            if (!agg[r.movie_id]) agg[r.movie_id] = { likes: 0, dislikes: 0 };
+            if (!agg[r.movie_id])
+              agg[r.movie_id] = { likes: 0, dislikes: 0 };
             if (r.reaction === 1) agg[r.movie_id].likes++;
             if (r.reaction === -1) agg[r.movie_id].dislikes++;
           }
@@ -112,27 +154,24 @@ function App() {
     })();
   }, []);
 
-  // фильтрация и поиск
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return movies
-      .filter((m) => !q || m.title.toLowerCase().includes(q))
-      .filter((m) => !onlyUnwatched || !userWatched.has(m.id))
-      .filter((m) => !onlyLiked || userReactions[m.id] === 1);
-  }, [movies, query, onlyUnwatched, onlyLiked, userWatched, userReactions]);
+  // ─────────── АВТО-ЛОГИН ПО СЕССИИ ───────────
 
-  // сброс страницы, если фильтры изменились
   useEffect(() => {
-    setCurrentPage(1);
-  }, [query, onlyUnwatched, onlyLiked, movies.length]);
+    const session = loadSession();
+    if (session) {
+      const user = {
+        id: session.user_id,
+        nickname: session.nickname,
+        is_admin: session.is_admin,
+      };
+      setCurrentUser(user);
+      setIsAdmin(!!session.is_admin);
+      setShowNickModal(false);
+      loadUserState(user.id);
+    }
+  }, []);
 
-  // пагинация
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const safePage = Math.min(currentPage, pageCount);
-  const startIndex = (safePage - 1) * PAGE_SIZE;
-  const paginated = filtered.slice(startIndex, startIndex + PAGE_SIZE);
-
-  // ─────────── ВХОД / РЕГИСТРАЦИЯ ───────────
+  // ─────────── ФУНКЦИИ ДЛЯ ПОЛЬЗОВАТЕЛЯ ───────────
 
   async function loadUserState(userId) {
     try {
@@ -210,6 +249,7 @@ function App() {
         setIsAdmin(!!user.is_admin);
         lsSet(LS_LAST_NICK, nick);
         setShowNickModal(false);
+        saveSession(user);
         await loadUserState(user.id);
       } else {
         // РЕГИСТРАЦИЯ
@@ -253,6 +293,7 @@ function App() {
         setIsAdmin(!!newUser.is_admin);
         lsSet(LS_LAST_NICK, nick);
         setShowNickModal(false);
+        saveSession(newUser);
         await loadUserState(newUser.id);
       }
     } catch (e) {
@@ -262,6 +303,7 @@ function App() {
   }
 
   function logout() {
+    clearSession();
     setCurrentUser(null);
     setIsAdmin(false);
     setUserWatched(new Set());
@@ -517,7 +559,6 @@ function App() {
         return m;
       });
 
-      // обновляем в базе (делаем это внутри, чтобы был доступ к versionToSave)
       if (versionToSave > 0) {
         supabase
           .from("movies")
@@ -534,7 +575,8 @@ function App() {
     });
   }
 
-  // итоговый src постера
+  // ─────────── ПОСТЕР SRC ───────────
+
   function getPosterSrc(movie) {
     const baseUrl =
       (movie.poster_url && movie.poster_url.trim()) || BASE_SHOT(movie.link);
@@ -544,6 +586,25 @@ function App() {
     const separator = baseUrl.includes("?") ? "&" : "?";
     return `${baseUrl}${separator}cb=${version}`;
   }
+
+  // ─────────── ФИЛЬТРЫ / ПАГИНАЦИЯ ───────────
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return movies
+      .filter((m) => !q || m.title.toLowerCase().includes(q))
+      .filter((m) => !onlyUnwatched || !userWatched.has(m.id))
+      .filter((m) => !onlyLiked || userReactions[m.id] === 1);
+  }, [movies, query, onlyUnwatched, onlyLiked, userWatched, userReactions]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [query, onlyUnwatched, onlyLiked, movies.length]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, pageCount);
+  const startIndex = (safePage - 1) * PAGE_SIZE;
+  const paginated = filtered.slice(startIndex, startIndex + PAGE_SIZE);
 
   // ─────────── РЕНДЕР ───────────
 
@@ -945,7 +1006,8 @@ function App() {
   );
 }
 
-// Модалка: вход / регистрация
+// ─────────── Модалка логина / регистрации ───────────
+
 function NickModal({ defaultNick, allowRegistration, onSubmit }) {
   const [nickname, setNickname] = useState(defaultNick || "");
   const [password, setPassword] = useState("");
