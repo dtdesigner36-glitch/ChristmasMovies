@@ -129,12 +129,22 @@ main{padding:20px 16px 28px}
 .watched-toggle{
   position:absolute;left:8px;top:8px;
   display:inline-flex;align-items:center;gap:6px;
-  background:rgba(20,180,120,.16);
-  border:1px solid rgba(50,200,150,.35);
-  color:#a4ffde;
   padding:5px 9px;border-radius:999px;
   cursor:pointer;backdrop-filter:blur(6px);
   font-size:12px;
+  border-width:1px;border-style:solid;
+}
+
+.watched-toggle.watched-off{
+  background:rgba(148,163,184,.16);
+  border-color:rgba(148,163,184,.4);
+  color:#e5e7eb;
+}
+
+.watched-toggle.watched-on{
+  background:rgba(20,180,120,.28);
+  border-color:rgba(34,197,94,.7);
+  color:#bbf7d0;
 }
 .reactions{
   display:flex;gap:8px;
@@ -243,6 +253,39 @@ main{padding:20px 16px 28px}
   padding:4px 8px;border-radius:999px;
   border:1px solid var(--md-outline);
   background:#202634;font-size:12px;
+}
+
+.admin-controls{
+  display:flex;
+  gap:6px;
+  justify-content:flex-end;
+  margin-bottom:4px;
+}
+
+.admin-icon-btn{
+  border:1px solid var(--md-outline);
+  background:var(--md-surface-3);
+  border-radius:999px;
+  padding:4px;
+  cursor:pointer;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+}
+.admin-icon-btn .material-symbols-rounded{
+  font-size:18px;
+}
+
+.pagination{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+  margin:0 0 12px 0;
+}
+.pagination-info{
+  font-size:13px;
+  color:#9aa0a6;
 }
 
 /* RESPONSIVE */
