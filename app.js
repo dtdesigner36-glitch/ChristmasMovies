@@ -7,8 +7,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // mshots превью постера по ссылке
-const SHOT = (url) =>
-  `https://s.wordpress.com/mshots/v1/${encodeURIComponent(url)}?w=640`;
+const SHOT = (url, version = 0) =>
+  `https://s.wordpress.com/mshots/v1/${encodeURIComponent(
+    url
+  )}?w=640&v=${version}`;
 
 // только для запоминания последнего ника на этом устройстве
 const LS_LAST_NICK = "xmas_last_nick_cloud_v4";
@@ -39,6 +41,7 @@ function App() {
   const [userWatched, setUserWatched] = useState(new Set());
   const [userReactions, setUserReactions] = useState({});
   const [movieReactions, setMovieReactions] = useState({});
+  const [posterVersion, setPosterVersion] = useState({});
 
   const [query, setQuery] = useState("");
   const [onlyUnwatched, setOnlyUnwatched] = useState(false);
@@ -403,6 +406,14 @@ function App() {
 
   // ─────────── РЕДАКТИРОВАНИЕ / УДАЛЕНИЕ ФИЛЬМА (админ) ───────────
 
+  function refreshPoster(movieId) {
+  // просто увеличиваем версию постера для конкретного фильма
+  setPosterVersion((prev) => ({
+    ...prev,
+    [movieId]: (prev[movieId] || 0) + 1,
+  }));
+}
+  
   function startEditMovie(movie) {
     if (!isAdmin) return;
     setEditingMovieId(movie.id);
@@ -606,7 +617,7 @@ function App() {
                     className="poster"
                     loading="lazy"
                     alt={movie.title}
-                    src={SHOT(movie.link)}
+                    src={SHOT(movie.link, posterVersion[movie.id] || 0)}
                     onError={(e) => {
                       const svg = encodeURIComponent(
                         `<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360'>
@@ -673,29 +684,33 @@ function App() {
                       <h3 className="title">{movie.title}</h3>
 
                       {isAdmin && (
-                        <div className="admin-controls">
-                          <button
-                            type="button"
-                            className="admin-icon-btn"
-                            title="Редактировать"
-                            onClick={() => startEditMovie(movie)}
-                          >
-                            <span className="material-symbols-rounded">
-                              edit
-                            </span>
-                          </button>
-                          <button
-                            type="button"
-                            className="admin-icon-btn"
-                            title="Удалить"
-                            onClick={() => deleteMovie(movie.id)}
-                          >
-                            <span className="material-symbols-rounded">
-                              delete
-                            </span>
-                          </button>
-                        </div>
-                      )}
+  <div className="admin-controls">
+    <button
+      type="button"
+      className="admin-icon-btn"
+      title="Редактировать"
+      onClick={() => startEditMovie(movie)}
+    >
+      <span className="material-symbols-rounded">edit</span>
+    </button>
+    <button
+      type="button"
+      className="admin-icon-btn"
+      title="Удалить"
+      onClick={() => deleteMovie(movie.id)}
+    >
+      <span className="material-symbols-rounded">delete</span>
+    </button>
+    <button
+      type="button"
+      className="admin-icon-btn"
+      title="Обновить постер"
+      onClick={() => refreshPoster(movie.id)}
+    >
+      <span className="material-symbols-rounded">refresh</span>
+    </button>
+  </div>
+)}
 
                       <div className="reactions">
                         <div
