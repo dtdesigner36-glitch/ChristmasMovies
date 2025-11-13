@@ -58,6 +58,21 @@ function App() {
   // 💡 кэш-бастер для конкретного фильма: { [movieId]: timestamp }
   const [posterCacheBust, setPosterCacheBust] = useState({});
 
+  function refreshPoster(movieId) {
+  if (!isAdmin) return;
+  setPosterCacheBust((prev) => ({
+    ...prev,
+    [movieId]: Date.now(),
+  }));
+}
+
+function getPosterSrc(movie) {
+  const base = BASE_SHOT(movie.link);
+  const cb = posterCacheBust[movie.id];
+  if (!cb) return base;
+  return `${base}&cb=${cb}`;
+}
+
   // начальная загрузка настроек, фильмов и общих лайков
   useEffect(() => {
     (async () => {
@@ -637,22 +652,23 @@ function App() {
               >
                 <div className="poster-wrap">
                   <img
-                    className="poster"
-                    loading="lazy"
-                    alt={movie.title}
-                    src={getPosterSrc(movie)}
-                    onError={(e) => {
-                      const svg = encodeURIComponent(
-                        `<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360'>
-                           <rect width='100%' height='100%' fill='#1f1f1f'/>
-                           <text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle'
-                             font-family='Inter, system-ui' font-size='24' fill='#9aa0a6'>${movie.title}</text>
-                         </svg>`
-                      );
-                      e.currentTarget.src =
-                        "data:image/svg+xml;charset=utf-8," + svg;
-                    }}
-                  />
+  key={movie.id + "-" + (posterCacheBust[movie.id] || 0)}
+  className="poster"
+  loading="lazy"
+  alt={movie.title}
+  src={getPosterSrc(movie)}
+  onError={(e) => {
+    const svg = encodeURIComponent(
+      `<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360'>
+         <rect width='100%' height='100%' fill='#1f1f1f'/>
+         <text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle'
+           font-family='Inter, system-ui' font-size='24' fill='#9aa0a6'>${movie.title}</text>
+       </svg>`
+    );
+    e.currentTarget.src =
+      "data:image/svg+xml;charset=utf-8," + svg;
+  }}
+/>
                   <button
                     className={
                       "watched-toggle " +
