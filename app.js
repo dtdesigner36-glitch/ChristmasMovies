@@ -6,12 +6,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// mshots превью постера по ссылке (базовый URL)
+// mshots превью для fallback
 const BASE_SHOT = (url) =>
   `https://s.wordpress.com/mshots/v1/${encodeURIComponent(url)}?w=640`;
 
-// только для запоминания последнего ника на этом устройстве
-const LS_LAST_NICK = "xmas_last_nick_cloud_v5";
+// только для сохранения ника на этом устройстве
+const LS_LAST_NICK = "xmas_last_nick_cloud_v6";
 function lsGet(key, fallback) {
   try {
     const v = localStorage.getItem(key);
@@ -44,36 +44,26 @@ function App() {
   const [onlyUnwatched, setOnlyUnwatched] = useState(false);
   const [onlyLiked, setOnlyLiked] = useState(false);
 
+  // добавление фильма
   const [addingMovie, setAddingMovie] = useState(false);
   const [newMovieTitle, setNewMovieTitle] = useState("");
   const [newMovieLink, setNewMovieLink] = useState("");
+  const [newMoviePosterUrl, setNewMoviePosterUrl] = useState("");
 
+  // редактирование фильма
   const [editingMovieId, setEditingMovieId] = useState(null);
   const [editTitle, setEditTitle] = useState("");
   const [editLink, setEditLink] = useState("");
+  const [editPosterUrl, setEditPosterUrl] = useState("");
 
+  // пагинация
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 24;
 
-  // 💡 кэш-бастер для конкретного фильма: { [movieId]: timestamp }
+  // кэш-бастер для постеров: { movieId: timestamp }
   const [posterCacheBust, setPosterCacheBust] = useState({});
 
-  function refreshPoster(movieId) {
-  if (!isAdmin) return;
-  setPosterCacheBust((prev) => ({
-    ...prev,
-    [movieId]: Date.now(),
-  }));
-}
-
-function getPosterSrc(movie) {
-  const base = BASE_SHOT(movie.link);
-  const cb = posterCacheBust[movie.id];
-  if (!cb) return base;
-  return `${base}&cb=${cb}`;
-}
-
-  // начальная загрузка настроек, фильмов и общих лайков
+  // начальная загрузка настроек, фильмов и общих реакций
   useEffect(() => {
     (async () => {
       try {
@@ -92,7 +82,7 @@ function getPosterSrc(movie) {
         // MOVIES
         const { data: movieRows, error: movieErr } = await supabase
           .from("movies")
-          .select("id,title,link")
+          .select("id,title,link,poster_url")
           .order("title", { ascending: true });
 
         if (!movieErr && movieRows) {
@@ -125,7 +115,7 @@ function getPosterSrc(movie) {
     })();
   }, []);
 
-  // фильтрация
+  // фильтрация и поиск
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return movies
@@ -134,7 +124,7 @@ function getPosterSrc(movie) {
       .filter((m) => !onlyLiked || userReactions[m.id] === 1);
   }, [movies, query, onlyUnwatched, onlyLiked, userWatched, userReactions]);
 
-  // при изменении фильтров / списка сбрасываем страницу на 1
+  // сброс страницы, если фильтры изменились
   useEffect(() => {
     setCurrentPage(1);
   }, [query, onlyUnwatched, onlyLiked, movies.length]);
@@ -179,7 +169,6 @@ function getPosterSrc(movie) {
     }
   }
 
-  // onSubmit из модалки
   async function handleAuth({ nickname, password, mode }) {
     const nick = (nickname || "").trim();
     const pass = (password || "").trim();
@@ -316,7 +305,7 @@ function getPosterSrc(movie) {
     }
   }
 
-  // ─────────── ЛАЙКИ / ДИЗЫ ───────────
+  // ─────────── ЛАЙКИ / ДИЗЛАЙКИ ───────────
 
   async function toggleReaction(movieId, value) {
     if (!currentUser) {
@@ -364,7 +353,7 @@ function getPosterSrc(movie) {
     }
   }
 
-  // ─────────── РЕГИСТРАЦИЯ ВКЛ/ВЫКЛ (только админ) ───────────
+  // ─────────── РЕГИСТРАЦИЯ ВКЛ/ВЫКЛ (админ) ───────────
 
   async function toggleRegistration() {
     if (!isAdmin) return;
@@ -387,6 +376,8 @@ function getPosterSrc(movie) {
 
     const title = newMovieTitle.trim();
     const link = newMovieLink.trim();
+    const poster_url = newMoviePosterUrl.trim() || null;
+
     if (!title || !link) {
       alert("Заполни название и ссылку");
       return;
@@ -396,8 +387,8 @@ function getPosterSrc(movie) {
       setAddingMovie(true);
       const { data, error } = await supabase
         .from("movies")
-        .insert({ title, link })
-        .select("id,title,link")
+        .insert({ title, link, poster_url })
+        .select("id,title,link,poster_url")
         .single();
 
       if (error) {
@@ -411,6 +402,7 @@ function getPosterSrc(movie) {
         );
         setNewMovieTitle("");
         setNewMovieLink("");
+        setNewMoviePosterUrl("");
       }
     } catch (e) {
       console.error("add movie error:", e);
@@ -426,18 +418,22 @@ function getPosterSrc(movie) {
     setEditingMovieId(movie.id);
     setEditTitle(movie.title);
     setEditLink(movie.link);
+    setEditPosterUrl(movie.poster_url || "");
   }
 
   function cancelEditMovie() {
     setEditingMovieId(null);
     setEditTitle("");
     setEditLink("");
+    setEditPosterUrl("");
   }
 
   async function saveEditMovie(movieId) {
     if (!isAdmin) return;
     const title = editTitle.trim();
     const link = editLink.trim();
+    const poster_url = editPosterUrl.trim() || null;
+
     if (!title || !link) {
       alert("Заполни название и ссылку");
       return;
@@ -445,9 +441,9 @@ function getPosterSrc(movie) {
     try {
       const { data, error } = await supabase
         .from("movies")
-        .update({ title, link })
+        .update({ title, link, poster_url })
         .eq("id", movieId)
-        .select("id,title,link")
+        .select("id,title,link,poster_url")
         .single();
 
       if (error) {
@@ -459,12 +455,11 @@ function getPosterSrc(movie) {
             .map((m) => (m.id === movieId ? data : m))
             .sort((a, b) => a.title.localeCompare(b.title, "ru"))
         );
-        // при изменении ссылки ломаем кэш постера, чтобы при следующей перезагрузке был новый
-        setPosterCacheBust((prev) => {
-          const n = { ...prev };
-          delete n[movieId];
-          return n;
-        });
+        // сбиваем кэш постера
+        setPosterCacheBust((prev) => ({
+          ...prev,
+          [movieId]: Date.now(),
+        }));
         cancelEditMovie();
       }
     } catch (e) {
@@ -522,20 +517,20 @@ function getPosterSrc(movie) {
 
   function refreshPoster(movieId) {
     if (!isAdmin) return;
-    // ставим для фильма новый timestamp — он попадёт в &cb= и точно собьёт кэш браузера
     setPosterCacheBust((prev) => ({
       ...prev,
       [movieId]: Date.now(),
     }));
   }
 
-  // получить итоговый src для постера
+  // итоговый src постера
   function getPosterSrc(movie) {
-    const base = BASE_SHOT(movie.link);
+    const baseUrl =
+      (movie.poster_url && movie.poster_url.trim()) || BASE_SHOT(movie.link);
     const cb = posterCacheBust[movie.id];
-    if (!cb) return base;
-    // base уже с ?w=640, добавляем ещё &cb=
-    return `${base}&cb=${cb}`;
+    if (!cb) return baseUrl;
+    const separator = baseUrl.includes("?") ? "&" : "?";
+    return `${baseUrl}${separator}cb=${cb}`;
   }
 
   return (
@@ -652,23 +647,25 @@ function getPosterSrc(movie) {
               >
                 <div className="poster-wrap">
                   <img
-  key={movie.id + "-" + (posterCacheBust[movie.id] || 0)}
-  className="poster"
-  loading="lazy"
-  alt={movie.title}
-  src={getPosterSrc(movie)}
-  onError={(e) => {
-    const svg = encodeURIComponent(
-      `<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360'>
-         <rect width='100%' height='100%' fill='#1f1f1f'/>
-         <text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle'
-           font-family='Inter, system-ui' font-size='24' fill='#9aa0a6'>${movie.title}</text>
-       </svg>`
-    );
-    e.currentTarget.src =
-      "data:image/svg+xml;charset=utf-8," + svg;
-  }}
-/>
+                    key={
+                      movie.id + "-" + (posterCacheBust[movie.id] || 0)
+                    }
+                    className="poster"
+                    loading="lazy"
+                    alt={movie.title}
+                    src={getPosterSrc(movie)}
+                    onError={(e) => {
+                      const svg = encodeURIComponent(
+                        `<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360'>
+                           <rect width='100%' height='100%' fill='#1f1f1f'/>
+                           <text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle'
+                             font-family='Inter, system-ui' font-size='24' fill='#9aa0a6'>${movie.title}</text>
+                         </svg>`
+                      );
+                      e.currentTarget.src =
+                        "data:image/svg+xml;charset=utf-8," + svg;
+                    }}
+                  />
                   <button
                     className={
                       "watched-toggle " +
@@ -697,6 +694,12 @@ function getPosterSrc(movie) {
                         placeholder="Ссылка на фильм"
                         value={editLink}
                         onChange={(e) => setEditLink(e.target.value)}
+                      />
+                      <input
+                        className="input input-full"
+                        placeholder="Постер (URL, опционально)"
+                        value={editPosterUrl}
+                        onChange={(e) => setEditPosterUrl(e.target.value)}
                       />
                       <div
                         className="row"
@@ -878,6 +881,12 @@ function getPosterSrc(movie) {
                 placeholder="Ссылка на фильм (Rezka / YouTube)"
                 value={newMovieLink}
                 onChange={(e) => setNewMovieLink(e.target.value)}
+              />
+              <input
+                className="input input-full"
+                placeholder="Постер (URL, опционально)"
+                value={newMoviePosterUrl}
+                onChange={(e) => setNewMoviePosterUrl(e.target.value)}
               />
               <button className="md-btn" type="submit" disabled={addingMovie}>
                 <span className="material-symbols-rounded">add</span>
